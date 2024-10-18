@@ -15,12 +15,12 @@
 #define GLOBAL_VAR_DAY_MAX_LATENT_LOSS "DAY_MAX_LATENT_LOSS"
 
 // CONSTANTS
-const string VERSION = "v1.0";
-const string LABEL_MAX_DD = "本日の最大DD:";
-const string LABEL_MAX_LOSS = "本日の最大含み損:";
-const string LABEL_CURRENT_PROFIT = "現在の損益(DD):";
-const string LABEL_PRICE_BUY_POSITION = "現在のBUYポジションの価格:";
-const string LABEL_PRICE_SELL_POSITION = "現在のSELLポジションの価格:";
+const string VERSION = "v1.0-en";
+const string LABEL_MAX_DD = "Max DD (Day):";
+const string LABEL_MAX_LOSS = "Max Loss (Day):";
+const string LABEL_CURRENT_PROFIT = "Current Profit(DD):";
+const string LABEL_PRICE_BUY_POSITION = "Current buy position price:";
+const string LABEL_PRICE_SELL_POSITION = "Current sell position price:";
 
 //+------------------------------------------------------------------+
 //| CanvasSettingEntity                                              |
