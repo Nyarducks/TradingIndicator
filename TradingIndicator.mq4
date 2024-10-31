@@ -7,15 +7,20 @@
 //+------------------------------------------------------------------+
 #property strict
 #property indicator_chart_window
+#property version "1.1"
+#property description "Release Build"
+#property description "No configurations."
+#property description "No ddls and experts required."
 
 #include <ChartObjects\ChartObjectsTxtControls.mqh>
 
 // GLOBAL VARIABLES (STORE)
 #define GLOBAL_VAR_DAY_MAX_DRAW_DOWN "DAY_MAX_DRAW_DOWN"
 #define GLOBAL_VAR_DAY_MAX_LATENT_LOSS "DAY_MAX_LATENT_LOSS"
+#define GLOBAL_VAR_LAST_DATE "LAST_DATE"
 
 // CONSTANTS
-const string VERSION = "v1.0-en";
+const string VERSION = "v1.1-en";
 const string LABEL_MAX_DD = "Max DD (Day):";
 const string LABEL_MAX_LOSS = "Max Loss (Day):";
 const string LABEL_CURRENT_PROFIT = "Current Profit(DD):";
@@ -85,6 +90,7 @@ struct TradingData {
     DayMaxLatentLossData dayMaxLatentLossData;  // Maximum latent loss data per day
     CurrentProfitData currentProfitData;        // Current profit data
     BreakevenPriceData breakevenPriceData;      // Breakeven price data
+    datetime pastDayTime;                       // Past day time
 };
 
 //+------------------------------------------------------------------+
@@ -124,6 +130,30 @@ class Paper : public CChartObjectRectLabel {
             return true;
         }
     }
+    void UpdateCanvas(TradingData &p) {
+        // Get calculated data
+        const DayMaxDrawDownData dayMaxDrawDownData = p.dayMaxDrawDownData;
+        const DayMaxLatentLossData dayMaxLatentLossData = p.dayMaxLatentLossData;
+        const CurrentProfitData currentProfitData = p.currentProfitData;
+        const BreakevenPriceData breakevenPriceData = p.breakevenPriceData;
+        // Set fields
+        canvas.SetValues(
+            StringFormat("%.2f%%", dayMaxDrawDownData.percent),
+            StringFormat("%.0f", dayMaxLatentLossData.profit),
+            StringFormat("%.0f (%.2f%%)", currentProfitData.profit, currentProfitData.percent),
+            StringFormat("%.2f [%d]", breakevenPriceData.buy.price, breakevenPriceData.buy.positions),
+            StringFormat("%.2f [%d]", breakevenPriceData.sell.price, breakevenPriceData.sell.positions)
+        );
+
+        // Set font colors
+        canvas.SetValueColors(
+            dayMaxDrawDownData.fontColor,
+            dayMaxLatentLossData.fontColor,
+            currentProfitData.fontColor,
+            clrBlack, // buy breakeven price color
+            clrBlack  // sell breakeven price color
+        );
+    }
     // set labels
     bool SetLabels(const string text1, const string text2, const string text3, const string text4, const string text5) {
         return m_title1.Description(text1) && m_title2.Description(text2) && m_title3.Description(text3) && m_title4.Description(text4) && m_title5.Description(text5);
@@ -158,10 +188,15 @@ class TradingDataCalculation {
         if(GlobalVariableCheck(GLOBAL_VAR_DAY_MAX_LATENT_LOSS)) {
             p.dayMaxLatentLossData.profit = GlobalVariableGet(GLOBAL_VAR_DAY_MAX_LATENT_LOSS);
         }
+        if(GlobalVariableCheck(GLOBAL_VAR_LAST_DATE)) {
+            p.pastDayTime = (datetime) GlobalVariableGet(GLOBAL_VAR_LAST_DATE);
+        } else {
+            p.pastDayTime = iTime(NULL, PERIOD_D1, 0);
+        }
     }
     // UpdateDayMaxDrawdownData
-    public: void UpdateDayMaxDrawdownData(TradingData &p) {
-        const DayMaxDrawDownData _i = p.dayMaxDrawDownData;
+    private: void UpdateDayMaxDrawdownData(TradingData &p) {
+        datetime currentDate = iTime(NULL, PERIOD_D1, 0);
         double balancePeak = AccountBalance();
         double currentDrawdown = 0;
         double floatingLoss = 0;
@@ -170,7 +205,7 @@ class TradingDataCalculation {
         for (int i = 0; i < OrdersTotal(); i++) {
             if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
                 datetime orderOpenTime = OrderOpenTime();
-                if (orderOpenTime >= iTime(NULL, PERIOD_D1, 0)) {
+                if (orderOpenTime >= currentDate) {
                     double orderProfit = OrderProfit();
                     if (orderProfit < 0) {
                         floatingLoss += orderProfit;
@@ -180,7 +215,7 @@ class TradingDataCalculation {
         }
 
         currentDrawdown = balancePeak - (balancePeak + floatingLoss);  // calculate peak balance takeaway by losses
-        p.dayMaxDrawDownData.profit = MathMax(_i.profit, currentDrawdown);  // update one
+        p.dayMaxDrawDownData.profit = MathMax(p.dayMaxDrawDownData.profit, currentDrawdown);  // update one
         p.dayMaxDrawDownData.percent = (p.dayMaxDrawDownData.profit / balancePeak) * 100.0;  // calculate drawdown percentages
 
         // Set color per drawdown levels.
@@ -192,11 +227,9 @@ class TradingDataCalculation {
             p.dayMaxDrawDownData.fontColor = clrRed;  // more than 80% -> Red
         }
     }
-    // UpdateDayMaxLatentLossData
-    public: void UpdateDayMaxLatentLossData(TradingData &p) {
-        const DayMaxLatentLossData _i = p.dayMaxLatentLossData;
+    // UpdateMaxLatentLossData
+    private: void UpdateMaxLatentLossData(TradingData &p) {
         double maxLatentLoss = 0;
-
         for(int i = 0; i < OrdersTotal(); i++) {
             if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
                 double latentLoss = OrderProfit();
@@ -205,10 +238,25 @@ class TradingDataCalculation {
                 }
             }
         }
-
-        p.dayMaxLatentLossData.profit = MathMin(_i.profit, maxLatentLoss);
+        p.dayMaxLatentLossData.profit = MathMin(p.dayMaxLatentLossData.profit, maxLatentLoss);
         // Set color (zero is black, loss is red)
         p.dayMaxLatentLossData.fontColor = (int) p.dayMaxLatentLossData.profit == 0 ? clrBlack : clrRed;
+    }
+    // UpdateDayTimeRecord
+    public: void UpdateDayTimeRecord(TradingData &p) {
+        datetime currentDate = iTime(NULL, PERIOD_D1, 0);
+        if (currentDate != p.pastDayTime) {
+            // draw down data
+            p.dayMaxDrawDownData.profit = 0;                // initialise draw down
+            p.dayMaxDrawDownData.percent = 0;               // initialise draw down percentages
+            p.dayMaxDrawDownData.fontColor = clrBlack;      // initialise font colour
+            // latent loss data
+            p.dayMaxLatentLossData.profit = 0;              // initialise max latent loss
+            p.dayMaxLatentLossData.fontColor = clrBlack;    // initialise font colour
+            p.pastDayTime = currentDate;                    // update past day time
+        }
+        UpdateDayMaxDrawdownData(p);    // update every
+        UpdateMaxLatentLossData(p);     // update every
     }
     // UpdateCurrentProfitData
     public: void UpdateCurrentProfitData(TradingData &p) {
@@ -311,34 +359,11 @@ int OnCalculate(
     const double &low[], const double &close[], const long &tick_volume[], const long &volume[], const int &spread[]
 ) {
     // Update every
-    c.UpdateDayMaxDrawdownData(tradingData);
-    c.UpdateDayMaxLatentLossData(tradingData);
+    c.UpdateDayTimeRecord(tradingData);
     c.UpdateCurrentProfitData(tradingData);
     c.UpdateBreakevenPriceData(tradingData);
-    // Get calculated data
-    const DayMaxDrawDownData dayMaxDrawDownData = tradingData.dayMaxDrawDownData;
-    const DayMaxLatentLossData dayMaxLatentLossData = tradingData.dayMaxLatentLossData;
-    const CurrentProfitData currentProfitData = tradingData.currentProfitData;
-    const BreakevenPriceData breakevenPriceData = tradingData.breakevenPriceData;
-
-    // Set fields
-    canvas.SetValues(
-        StringFormat("%.0f (%.2f%%)", dayMaxDrawDownData.profit, dayMaxDrawDownData.percent),
-        StringFormat("%.0f", dayMaxLatentLossData.profit),
-        StringFormat("%.0f (%.2f%%)", tradingData.currentProfitData.profit, tradingData.currentProfitData.percent),
-        StringFormat("%.2f [%d]", breakevenPriceData.buy.price, breakevenPriceData.buy.positions),
-        StringFormat("%.2f [%d]", breakevenPriceData.sell.price, breakevenPriceData.sell.positions)
-    );
-
-    // Set font colors
-    canvas.SetValueColors(
-        dayMaxDrawDownData.fontColor,
-        dayMaxLatentLossData.fontColor,
-        currentProfitData.fontColor,
-        clrBlack, // buy breakeven price color
-        clrBlack  // sell breakeven price color
-    );
-
+    // Update canvas
+    canvas.UpdateCanvas(tradingData);
     return rates_total;
 }
 
@@ -349,6 +374,7 @@ void OnDeinit(const int reason) {
     // store data
     GlobalVariableSet(GLOBAL_VAR_DAY_MAX_DRAW_DOWN, tradingData.dayMaxDrawDownData.profit);
     GlobalVariableSet(GLOBAL_VAR_DAY_MAX_LATENT_LOSS, tradingData.dayMaxLatentLossData.profit);
+    GlobalVariableSet(GLOBAL_VAR_LAST_DATE, tradingData.pastDayTime);
     // delete trading indicator
     canvas.Destroy(canvasSetting);
 }
